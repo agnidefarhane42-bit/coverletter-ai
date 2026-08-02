@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: coverletter-ai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - DOCENGINE_API_KEY=${DOCENGINE_API_KEY}
+      - NOTCH_PAY_PRIVATE_KEY=${NOTCH_PAY_PRIVATE_KEY}
+      - NOTCH_PAY_PUBLIC_KEY=${NOTCH_PAY_PUBLIC_KEY}
+      - PORT=8000
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: coverletter-ai-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_NOTCH_PAY_PUBLIC_KEY=${NEXT_PUBLIC_NOTCH_PAY_PUBLIC_KEY}
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    restart: unless-stopped
