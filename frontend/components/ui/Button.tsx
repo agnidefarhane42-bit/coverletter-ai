@@ -6,10 +6,11 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
   size?: 'sm' | 'md' | 'lg';
   isLoading?: boolean;
+  asChild?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', isLoading = false, children, disabled, ...props }, ref) => {
+  ({ className, variant = 'primary', size = 'md', isLoading = false, asChild = false, children, disabled, ...props }, ref) => {
     const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none active:scale-[0.98]';
     
     const variants = {
@@ -26,11 +27,21 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       lg: 'px-6 py-3 text-base font-semibold',
     };
 
+    const combinedClassName = cn(baseStyles, variants[variant], sizes[size], className);
+
+    if (asChild && React.isValidElement(children)) {
+      const childProps = children.props as Record<string, unknown>;
+      return React.cloneElement(children, {
+        className: cn(combinedClassName, childProps.className as string | undefined),
+        ...props,
+      } as Record<string, unknown>);
+    }
+
     return (
       <button
         ref={ref}
         disabled={disabled || isLoading}
-        className={cn(baseStyles, variants[variant], sizes[size], className)}
+        className={combinedClassName}
         {...props}
       >
         {isLoading && <Spinner size="sm" className="mr-2 text-current" />}
