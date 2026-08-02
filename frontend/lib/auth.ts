@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { findUserByEmail, verifyPassword } from "./users";
+
+const AUTH_API_URL = process.env.AUTH_API_URL || "https://fable-2a6c9237.base44.app/functions/clAuth";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
@@ -15,24 +16,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const email = String(credentials.email);
-        const password = String(credentials.password);
+        try {
+          const res = await fetch(AUTH_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "login",
+              email: String(credentials.email),
+              password: String(credentials.password),
+            }),
+          });
 
-        const user = await findUserByEmail(email);
-        if (!user) {
+          if (!res.ok) {
+            return null;
+          }
+
+          const data = await res.json();
+
+          if (data.success && data.user) {
+            return {
+              id: data.user.id,
+              name: data.user.name,
+              email: data.user.email,
+            };
+          }
+
+          return null;
+        } catch (error) {
+          console.error("Auth error:", error);
           return null;
         }
-
-        const isValid = verifyPassword(password, user.passwordHash);
-        if (!isValid) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-        };
       },
     }),
   ],

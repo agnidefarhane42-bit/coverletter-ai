@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createUser, findUserByEmail } from '@/lib/users';
+
+const AUTH_API_URL = process.env.AUTH_API_URL || "https://fable-2a6c9237.base44.app/functions/clAuth";
 
 export async function POST(request: Request) {
   try {
@@ -15,37 +16,41 @@ export async function POST(request: Request) {
 
     if (password.length < 6) {
       return NextResponse.json(
-        { error: 'Le mot de passe doit contenir au moins 6 caractères.' },
+        { error: 'Le mot de passe doit contenir au moins 6 caracteres.' },
         { status: 400 }
       );
     }
 
-    const existingUser = await findUserByEmail(email);
-    if (existingUser) {
+    const res = await fetch(AUTH_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'signup',
+        name,
+        email,
+        password,
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
       return NextResponse.json(
-        { error: 'Un compte avec cet e-mail existe déjà.' },
-        { status: 400 }
+        { error: data?.error || `Erreur lors de linscription (${res.status})` },
+        { status: res.status }
       );
     }
 
-    const newUser = await createUser({ name, email, password });
+    return NextResponse.json({
+      success: true,
+      message: 'Compte cree avec succes.',
+      user: data.user,
+    }, { status: 201 });
 
-    return NextResponse.json(
-      {
-        success: true,
-        message: 'Compte créé avec succès.',
-        user: {
-          id: newUser.id,
-          name: newUser.name,
-          email: newUser.email,
-        },
-      },
-      { status: 201 }
-    );
   } catch (error: any) {
     console.error('Signup error:', error);
     return NextResponse.json(
-      { error: error.message || 'Une erreur est survenue lors de l’inscription.' },
+      { error: error.message || 'Une erreur est survenue lors de linscription.' },
       { status: 500 }
     );
   }
