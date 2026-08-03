@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   Upload,
   FileText,
@@ -11,16 +12,18 @@ import {
   Check,
   Wand2,
   Briefcase,
-  ClipboardPaste,
   LogOut,
   Loader2,
+  Crown,
+  Lock,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { readFileAsBase64 } from '@/lib/utils';
 
 type Tone = 'formal' | 'creative' | 'direct';
-type Step = 'input' | 'generating' | 'result';
+type Step = 'input' | 'generating' | 'result' | 'paywall';
 
 interface GenerateResponse {
   letter: string;
@@ -30,7 +33,10 @@ interface GenerateResponse {
   };
 }
 
+const PRO_PRICE = 15000;
+
 export default function DashboardClient({ userName }: { userName: string }) {
+  const searchParams = useSearchParams();
   const [step, setStep] = useState<Step>('input');
   const [cvText, setCvText] = useState('');
   const [cvFileName, setCvFileName] = useState('');
@@ -46,6 +52,46 @@ export default function DashboardClient({ userName }: { userName: string }) {
   const [pdfUrl, setPdfUrl] = useState('');
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Subscription state
+  const [plan, setPlan] = useState<'free' | 'pro'>('free');
+  const [freeLettersUsed, setFreeLettersUsed] = useState(0);
+  const [loadingPlan, setLoadingPlan] = useState(true);
+  const [paying, setPaying] = useState(false);
+  const [paymentMsg, setPaymentMsg] = useState('');
+
+  useEffect(() => {
+    async function fetchSubscription() {
+      try {
+        const res = await fetch('/api/subscription/status');
+        const data = await res.json();
+        setPlan(data.plan || 'free');
+        setFreeLettersUsed(data.freeLettersUsed || 0);
+      } catch {
+        // Default to free
+      } finally {
+        setLoadingPlan(false);
+      }
+    }
+    fetchSubscription();
+  }, []);
+
+  // Handle payment redirect messages
+  useEffect(() => {
+    const payment = searchParams.get('payment');
+    if (payment === 'success') {
+      setPaymentMsg('✓ Paiement réussi ! Votre plan Pro est actif.');
+      setPlan('pro');
+    } else if (payment === 'failed') {
+      setPaymentMsg('Le paiement a échoué. Réessayez.');
+    } else if (payment === 'pending') {
+      setPaymentMsg('Paiement en cours de traitement...');
+    } else if (payment === 'error') {
+      setPaymentMsg('Erreur lors du paiement. Contactez le support.');
+    }
+  }, [searchParams]);
+
+  const isFreeExhausted = plan === 'free' && freeLettersUsed >= 1;
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -88,7 +134,13 @@ export default function DashboardClient({ userName }: { userName: string }) {
       return;
     }
     if (!jobOffer.trim()) {
-      setError('Veuillez coller l\'offre d\'emploi.');
+      setError("Veuillez coller l'offre d'emploi.");
+      return;
+    }
+
+    // Check freemium
+    if (isFreeExhausted) {
+      setStep('paywall');
       return;
     }
 
@@ -120,9 +172,42 @@ export default function DashboardClient({ userName }: { userName: string }) {
       setGeneratedLetter(generateData.letter);
       setEditableLetter(generateData.letter);
       setStep('result');
+
+      // Increment free usage if on free plan
+      if (plan === 'free') {
+        setFreeLettersUsed((prev) => prev + 1);
+        // Fire and forget — update backend
+        fetch('/api/subscription/status', { method: 'POST' }).catch(() => {});
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la génération.');
       setStep('input');
+    }
+  }
+
+  async function handleUpgrade() {
+    setPaying(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/notchpay/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: 'pro_monthly' }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de l\'initialisation du paiement');
+      }
+
+      // Redirect to Notch Pay checkout
+      window.location.href = data.authorizationUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur lors du paiement.');
+    } finally {
+      setPaying(false);
     }
   }
 
@@ -149,13 +234,11 @@ export default function DashboardClient({ userName }: { userName: string }) {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Erreur lors de l\'export PDF.');
+        throw new Error(data.error || "Erreur lors de l'export PDF.");
       }
 
       const url = data.pdfUrl || data.url;
       if (url) {
-        // Create a temporary anchor element to trigger download
-        // This works for both data: URLs (base64) and regular URLs
         const link = document.createElement('a');
         link.href = url;
         link.download = 'lettre-motivation.pdf';
@@ -165,10 +248,10 @@ export default function DashboardClient({ userName }: { userName: string }) {
         document.body.removeChild(link);
         setPdfUrl(url);
       } else {
-        throw new Error('Aucun PDF recu de DocEngine.');
+        throw new Error('Aucun PDF reçu de DocEngine.');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur lors de l\'export PDF.');
+      setError(err instanceof Error ? err.message : "Erreur lors de l'export PDF.");
     } finally {
       setGeneratingPdf(false);
     }
@@ -191,30 +274,125 @@ export default function DashboardClient({ userName }: { userName: string }) {
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Navbar */}
-      <nav className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md">
+      <nav className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <Link href="/" className="flex items-center gap-2 text-lg font-bold text-white">
             <Sparkles className="h-5 w-5 text-indigo-400" />
             CoverLetter AI
           </Link>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-400">{userName}</span>
+            {/* Plan badge */}
+            {!loadingPlan && (
+              <span className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+                plan === 'pro'
+                  ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-700/50'
+                  : 'bg-slate-800 text-slate-400'
+              }`}>
+                {plan === 'pro' ? (
+                  <>
+                    <Crown className="h-3.5 w-3.5" />
+                    Pro
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3.5 w-3.5" />
+                    Gratuit ({Math.max(0, 1 - freeLettersUsed)} restante)
+                  </>
+                )}
+              </span>
+            )}
+            <span className="text-sm text-slate-400 hidden sm:inline">{userName}</span>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => window.location.href = '/api/auth/signout'}
+              onClick={() => (window.location.href = '/api/auth/signout')}
             >
               <LogOut className="h-4 w-4" />
-              Déconnexion
+              <span className="hidden sm:inline">Déconnexion</span>
             </Button>
           </div>
         </div>
       </nav>
 
       <div className="mx-auto max-w-4xl px-6 py-8">
+        {/* Payment message */}
+        {paymentMsg && (
+          <div className={`mb-6 rounded-lg border px-4 py-3 text-sm ${
+            paymentMsg.startsWith('✓')
+              ? 'bg-emerald-950/50 border-emerald-800/50 text-emerald-300'
+              : 'bg-amber-950/50 border-amber-800/50 text-amber-300'
+          }`}>
+            {paymentMsg}
+          </div>
+        )}
+
         {error && (
           <div className="mb-6 rounded-lg bg-rose-950/50 border border-rose-800/50 px-4 py-3 text-sm text-rose-300">
             {error}
+          </div>
+        )}
+
+        {/* Step: Paywall */}
+        {step === 'paywall' && (
+          <div className="space-y-6">
+            <div className="text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-600/20 border border-indigo-700/50">
+                <Lock className="h-8 w-8 text-indigo-400" />
+              </div>
+              <h1 className="text-3xl font-bold text-white mb-2">Vous avez utilisé votre lettre gratuite</h1>
+              <p className="text-slate-400">Passez au plan Pro pour générer des lettres en illimité</p>
+            </div>
+
+            <Card className="border-indigo-700/50 ring-1 ring-indigo-700/30 max-w-lg mx-auto">
+              <CardContent className="p-8">
+                <div className="mb-6 text-center">
+                  <h2 className="mb-1 text-2xl font-bold text-white">Plan Pro</h2>
+                  <p className="text-sm text-slate-400">Pour les chercheurs d'emploi actifs</p>
+                  <div className="mt-4">
+                    <span className="text-4xl font-bold text-white">15 000</span>
+                    <span className="text-lg text-slate-400"> FCFA</span>
+                    <span className="text-sm text-slate-500"> / mois</span>
+                  </div>
+                </div>
+
+                <ul className="space-y-3 mb-8">
+                  {[
+                    'Lettres illimitées',
+                    'Export PDF professionnel',
+                    '3 tons au choix (formel, créatif, direct)',
+                    'Français & Anglais',
+                    'Paiement Mobile Money (MTN, Moov, Orange)',
+                    'Sans filigrane',
+                  ].map((item, i) => (
+                    <li key={i} className="flex items-center gap-2 text-sm text-slate-300">
+                      <Check className="h-4 w-4 shrink-0 text-emerald-400" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+
+                <Button
+                  size="lg"
+                  className="w-full"
+                  onClick={handleUpgrade}
+                  isLoading={paying}
+                >
+                  <Crown className="mr-2 h-5 w-5" />
+                  Payer 15 000 FCFA via Notch Pay
+                </Button>
+
+                <p className="mt-4 text-center text-xs text-slate-500">
+                  Paiement sécurisé via Notch Pay • Mobile Money ou carte bancaire
+                </p>
+
+                <button
+                  onClick={() => setStep('input')}
+                  className="mt-4 w-full text-center text-sm text-slate-400 hover:text-white transition-colors"
+                >
+                  Retour
+                </button>
+              </CardContent>
+            </Card>
           </div>
         )}
 
@@ -225,6 +403,17 @@ export default function DashboardClient({ userName }: { userName: string }) {
               <h1 className="text-3xl font-bold text-white mb-2">Générer une lettre de motivation</h1>
               <p className="text-slate-400">Importez votre CV et collez l'offre d'emploi</p>
             </div>
+
+            {/* Free limit warning */}
+            {isFreeExhausted && (
+              <div className="rounded-lg bg-amber-950/50 border border-amber-800/50 px-4 py-3 text-sm text-amber-300 flex items-center justify-between">
+                <span>Vous avez utilisé votre lettre gratuite. Passez Pro pour continuer.</span>
+                <Button size="sm" onClick={() => setStep('paywall')}>
+                  <Crown className="mr-1.5 h-4 w-4" />
+                  Passer Pro
+                </Button>
+              </div>
+            )}
 
             {/* CV Upload */}
             <Card>
@@ -369,7 +558,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
               disabled={(!cvText && !cvBase64) || !jobOffer.trim()}
             >
               <Sparkles className="mr-2 h-5 w-5" />
-              Générer ma lettre de motivation
+              {isFreeExhausted ? 'Passer Pro pour générer' : 'Générer ma lettre de motivation'}
             </Button>
           </div>
         )}
@@ -441,6 +630,20 @@ export default function DashboardClient({ userName }: { userName: string }) {
               <p className="text-sm text-emerald-400">
                 ✓ PDF généré avec succès. Vérifiez vos téléchargements.
               </p>
+            )}
+
+            {/* Upsell for free users */}
+            {plan === 'free' && (
+              <div className="rounded-lg bg-indigo-950/30 border border-indigo-800/50 px-6 py-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white font-medium">Besoin de plus de lettres ?</p>
+                  <p className="text-xs text-slate-400">Passez Pro pour des lettres illimitées à 15 000 FCFA/mois</p>
+                </div>
+                <Button size="sm" onClick={() => setStep('paywall')}>
+                  <Crown className="mr-1.5 h-4 w-4" />
+                  Passer Pro
+                </Button>
+              </div>
             )}
           </div>
         )}
