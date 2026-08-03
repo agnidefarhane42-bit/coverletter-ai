@@ -152,10 +152,20 @@ export default function DashboardClient({ userName }: { userName: string }) {
         throw new Error(data.error || 'Erreur lors de l\'export PDF.');
       }
 
-      if (data.pdfUrl || data.url) {
-        const url = data.pdfUrl || data.url;
-        window.open(data.url, '_blank');
-        setPdfUrl(data.url);
+      const url = data.pdfUrl || data.url;
+      if (url) {
+        // Create a temporary anchor element to trigger download
+        // This works for both data: URLs (base64) and regular URLs
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'lettre-motivation.pdf';
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setPdfUrl(url);
+      } else {
+        throw new Error('Aucun PDF recu de DocEngine.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de l\'export PDF.');
@@ -429,7 +439,7 @@ export default function DashboardClient({ userName }: { userName: string }) {
 
             {pdfUrl && (
               <p className="text-sm text-emerald-400">
-                ✓ PDF généré. Le téléchargement a commencé dans un nouvel onglet.
+                ✓ PDF généré avec succès. Vérifiez vos téléchargements.
               </p>
             )}
           </div>
